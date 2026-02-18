@@ -1,0 +1,303 @@
+openapi: 3.0.3
+info:
+  title: WhatsApp Baileys API
+  description: |
+    API untuk mengirim pesan WhatsApp via Baileys (teks, gambar, dokumen, audio, video).
+    Sebelum kirim pesan, pastikan sudah scan QR di endpoint **GET /api/status** (buka `qrImageUrl` di browser).
+  version: 1.0.0
+  contact: {}
+
+servers:
+  - url: http://localhost:3000
+    description: Local
+
+tags:
+  - name: Status & QR
+    description: Cek koneksi dan akses QR untuk scan WhatsApp
+  - name: Pesan
+    description: Kirim berbagai jenis pesan
+
+paths:
+  /api/status:
+    get:
+      tags: [Status & QR]
+      summary: Status koneksi & URL QR
+      description: |
+        Mengembalikan status WhatsApp (connected/open/disconnected) dan **URL untuk akses QR**.
+        - Buka `data.qrImageUrl` di browser untuk tampilan QR yang bisa di-scan.
+        - Jika sudah terhubung, `qrUrl` akan null.
+      operationId: getStatus
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Status koneksi WhatsApp
+                  data:
+                    type: object
+                    properties:
+                      connected:
+                        type: boolean
+                        description: true jika WhatsApp sudah terhubung
+                      status:
+                        type: string
+                        enum: [disconnected, connecting, open, close]
+                      qrUrl:
+                        type: string
+                        nullable: true
+                        description: URL endpoint QR (JSON)
+                        example: http://localhost:3000/api/qr
+                      qrImageUrl:
+                        type: string
+                        nullable: true
+                        description: URL gambar QR — buka di browser untuk scan
+                        example: http://localhost:3000/api/qr/image
+
+  /api/qr:
+    get:
+      tags: [Status & QR]
+      summary: Data QR (JSON)
+      description: Mengembalikan string QR dalam JSON. Gunakan untuk render QR di client.
+      operationId: getQrData
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: boolean }
+                  message: { type: string }
+                  data:
+                    type: object
+                    properties:
+                      qr: { type: string }
+                      qrUrl: { type: string }
+        '404':
+          description: Tidak ada QR (sudah terhubung atau belum generate)
+
+  /api/qr/image:
+    get:
+      tags: [Status & QR]
+      summary: Gambar QR (PNG)
+      description: |
+        Mengembalikan gambar QR code (image/png). **Buka URL ini di browser** untuk scan dengan WhatsApp.
+      operationId: getQrImage
+      responses:
+        '200':
+          description: Gambar PNG
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: QR tidak tersedia
+
+  /api/logout:
+    post:
+      tags: [Status & QR]
+      summary: Logout WhatsApp
+      description: |
+        Logout (hapus session). Setelah ini harus scan QR lagi di GET /api/status → qrImageUrl.
+      operationId: logout
+      responses:
+        '200':
+          description: Logout berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: Tidak ada koneksi aktif
+
+  /api/reconnect:
+    post:
+      tags: [Status & QR]
+      summary: Reconnect
+      description: |
+        Putus koneksi saat ini lalu sambung lagi dengan credential yang sama (tanpa scan QR).
+      operationId: reconnect
+      responses:
+        '200':
+          description: Reconnect dimulai
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/send-message:
+    post:
+      tags: [Pesan]
+      summary: Kirim pesan teks
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [number, message]
+              properties:
+                number:
+                  type: string
+                  description: Nomor tujuan (dengan atau tanpa +/0)
+                  example: "6281234567890"
+                message:
+                  type: string
+                  example: "Halo dari API"
+      responses:
+        '200':
+          description: Pesan terkirim
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: number atau message kosong
+        '503':
+          description: WhatsApp belum terhubung (scan QR dulu)
+
+  /api/send-image:
+    post:
+      tags: [Pesan]
+      summary: Kirim gambar
+      description: |
+        Hanya form-data. Field: `number`, **file** atau **image** (file), `caption` (opsional).
+      operationId: sendImage
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [number]
+              properties:
+                number: { type: string, example: "6281234567890" }
+                caption: { type: string }
+                file: { type: string, format: binary }
+                image: { type: string, format: binary, description: "Alternatif" }
+      responses:
+        '200':
+          description: Gambar terkirim
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: number atau image/file kosong
+        '503':
+          description: WhatsApp belum terhubung
+
+  /api/send-document:
+    post:
+      tags: [Pesan]
+      summary: Kirim dokumen
+      description: |
+        Hanya form-data. Field: `number`, **file** atau **document** (file), `fileName`, `caption` (opsional).
+      operationId: sendDocument
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [number]
+              properties:
+                number: { type: string }
+                fileName: { type: string }
+                caption: { type: string }
+                file: { type: string, format: binary }
+                document: { type: string, format: binary, description: "Alternatif" }
+      responses:
+        '200':
+          description: Dokumen terkirim
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: number atau document/file kosong
+        '503':
+          description: WhatsApp belum terhubung
+
+  /api/send-audio:
+    post:
+      tags: [Pesan]
+      summary: Kirim audio / voice note
+      description: |
+        Hanya form-data. Field: `number`, **file** atau **audio** (file), `ptt` (opsional, true = voice note).
+      operationId: sendAudio
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [number]
+              properties:
+                number: { type: string }
+                ptt: { type: boolean }
+                file: { type: string, format: binary }
+                audio: { type: string, format: binary, description: "Alternatif" }
+      responses:
+        '200':
+          description: Audio terkirim
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: number atau audio/file kosong
+        '503':
+          description: WhatsApp belum terhubung
+
+  /api/send-video:
+    post:
+      tags: [Pesan]
+      summary: Kirim video
+      description: |
+        Hanya form-data. Field: `number`, **file** atau **video** (file), `caption`, `ptv` (opsional, true = video note).
+      operationId: sendVideo
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [number]
+              properties:
+                number: { type: string }
+                caption: { type: string }
+                ptv: { type: boolean }
+                file: { type: string, format: binary }
+                video: { type: string, format: binary, description: "Alternatif" }
+      responses:
+        '200':
+          description: Video terkirim
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: number atau video/file kosong
+        '503':
+          description: WhatsApp belum terhubung
+
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        status: { type: boolean }
+        message: { type: string }
+        data: { type: object, nullable: true }
