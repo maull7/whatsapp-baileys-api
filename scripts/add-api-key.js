@@ -3,6 +3,7 @@
  * Usage: node scripts/add-api-key.js <tenant_id>
  *        npm run add-key -- pelanggan_a
  */
+require('dotenv').config();
 const db = require("../src/db");
 const { addKey, listTenants } = require("../src/utils/apiKeysDb");
 
