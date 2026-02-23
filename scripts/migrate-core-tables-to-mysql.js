@@ -1,5 +1,5 @@
 /**
- * Migrasi tabel utama dari Postgres ke MySQL:
+ * Migrasi tabel utama ke MySQL (atau dari Postgres lama ke MySQL):
  *  - api_keys
  *  - whitelist
  *  - daily_limits
@@ -11,7 +11,7 @@
  *   npm run migrate-core-to-mysql
  *
  * Koneksi:
- *   - Postgres: pakai src/db (env DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD)
+ *   - Jika dari Postgres lama: env DB_* untuk sumber, MYSQL_* untuk tujuan
  *   - MySQL:    pakai src/db/mysql (env MYSQL_HOST, MYSQL_PORT, MYSQL_DB, MYSQL_USER, MYSQL_PASSWORD)
  */
 
@@ -199,7 +199,7 @@ async function migrateAuthKeys() {
 
 async function main() {
   try {
-    console.log("=== Migrasi core tables Postgres -> MySQL ===");
+    console.log("=== Migrasi core tables ke MySQL ===");
     await ensureMysqlCoreTables();
     await migrateApiKeys();
     await migrateWhitelist();

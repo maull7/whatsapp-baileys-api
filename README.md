@@ -6,7 +6,7 @@ Backend WhatsApp memakai [@whiskeysockets/baileys](https://github.com/WhiskeySoc
 
 - Semua endpoint di bawah **`/api`** wajib **API Key**.
 - Satu **API key** = satu pelanggan (tenant) = **satu koneksi WhatsApp** (satu QR, satu nomor).
-- Key disimpan di **database PostgreSQL**. Tambah key baru: **`npm run add-key -- <tenant_id>`** (contoh: `npm run add-key -- pelanggan_a`).
+- Key disimpan di **database MySQL**. Tambah key baru: **`npm run add-key -- <tenant_id>`** (contoh: `npm run add-key -- pelanggan_a`).
 - Request wajib header: **`X-API-Key: <key>`** atau **`Authorization: Bearer <key>`**.
 - Contoh: `curl -H "X-API-Key: sk_xxx..." http://localhost:3000/api/status`
 - Whitelist & kuota harian dipisah per tenant.
@@ -38,7 +38,7 @@ Backend WhatsApp memakai [@whiskeysockets/baileys](https://github.com/WhiskeySoc
 
 ## Auth state (login WhatsApp) — disimpan di database
 
-**Auth state** (kredensial + key session setelah scan QR) disimpan di **PostgreSQL**, bukan folder `auth_info`.
+**Auth state** (kredensial + key session setelah scan QR) disimpan di **MySQL**, bukan folder `auth_info`.
 
 - **Tabel:** `auth_creds` (satu baris per tenant) dan `auth_keys` (banyak baris per tenant untuk pre-key, session, dll). Lihat `docs/DATABASE.md`.
 - **Fungsi:** Setelah scan QR sekali, kredensial disimpan di DB. Saat server restart atau reconnect, **tidak perlu scan QR lagi**.
@@ -144,7 +144,7 @@ Satu pelanggan = satu API key = satu nomor WhatsApp. Untuk masuk (link device), 
 
 ## Scalable & Production Ready
 
-- **Database:** API keys di PostgreSQL, bisa scale horizontal.
+- **Database:** API keys di MySQL, bisa scale horizontal.
 - **Multi-tenant:** Satu instance bisa handle banyak pelanggan (tiap pelanggan = satu key = satu WhatsApp).
 - **Kontak & Groups:** Endpoint `/api/contacts` ambil kontak tersimpan di HP, `/api/groups` ambil daftar grup.
 - **Error handling:** Semua endpoint ada try-catch, error dicatat di console.

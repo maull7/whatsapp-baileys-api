@@ -1,5 +1,5 @@
 /**
- * Auth state Baileys disimpan di PostgreSQL (gantikan useMultiFileAuthState).
+ * Auth state Baileys disimpan di MySQL (gantikan useMultiFileAuthState).
  * Format sama dengan useMultiFileAuthState: state.creds, state.keys.get/set, saveCreds.
  */
 const db = require("../db");

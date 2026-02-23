@@ -5,6 +5,9 @@ const {
   getSocket,
   getQR,
   getConnectionStatus,
+  getStatusMessage,
+  getLastDisconnectMessage,
+  getLastDisconnectReason,
   ensureConnection,
   logout: doLogout,
   reconnect: doReconnect,
@@ -40,13 +43,10 @@ function getFirstFile(req) {
   return null;
 }
 
+/** Hanya anggap siap ketika Baileys sudah emit connection "open". Jangan anggap siap hanya karena WebSocket terbuka (pas scan bisa masih "connecting"). */
 function isSocketReady(sock, status) {
   if (!sock) return false;
-  if (status === "open") return true;
-  try {
-    if (sock.ws && (sock.ws.isOpen === true || sock.ws.socket?.readyState === 1)) return true;
-  } catch (_) {}
-  return false;
+  return status === "open";
 }
 
 async function requireSocket(req, res, next) {
@@ -87,26 +87,44 @@ router.get("/status", async (req, res) => {
   await ensureConnection(tid);
   const sock = getSocket(tid);
   const status = getConnectionStatus(tid);
-  const connected = isSocketReady(sock, status);
+  let connected = isSocketReady(sock, status);
   const qr = getQR(tid);
+  const lastReason = getLastDisconnectReason(tid);
+  const lastMsg = getLastDisconnectMessage(tid);
+
+  // Logout dari HP (401): anggap disconnected dan wajib QR baru
+  const loggedOutFromPhone = lastReason === 401;
+  if (loggedOutFromPhone) {
+    connected = false;
+  }
+
+  const message = getStatusMessage(tid);
   const data = {
     tenantId: tid,
     connected,
     status: connected ? "open" : status,
+    message,
+    needQR: !connected && (!!qr || status === "connecting" || loggedOutFromPhone),
+    lastDisconnectMessage: connected ? null : lastMsg,
     qrUrl: qr ? `${config.baseUrl}/api/qr` : null,
     qrImageUrl: qr ? `${config.baseUrl}/api/qr/image` : null,
   };
-  return success(res, data, "Status koneksi WhatsApp");
+  return success(res, data, message);
 });
 
 router.get("/qr", async (req, res) => {
   const tid = req.tenantId;
   await ensureConnection(tid);
   const qr = getQR(tid);
-  if (!qr) {
-    return error(res, "QR belum tersedia. Tunggu 2–3 detik lalu refresh, atau GET /api/status dulu.", 404);
+  const status = getConnectionStatus(tid);
+  const connected = isSocketReady(getSocket(tid), status);
+  if (connected) {
+    return success(res, { qr: null, qrUrl: null, message: "Sudah terhubung, QR tidak diperlukan." }, "Sudah terhubung");
   }
-  return success(res, { qr, qrUrl: `${config.baseUrl}/api/qr/image` }, "Data QR");
+  if (!qr) {
+    return error(res, getStatusMessage(tid) || "QR belum tersedia. Tunggu beberapa detik lalu GET /api/status lagi.", 404);
+  }
+  return success(res, { qr, qrUrl: `${config.baseUrl}/api/qr/image`, message: getStatusMessage(tid) }, "Data QR");
 });
 
 router.get("/qr/image", async (req, res) => {

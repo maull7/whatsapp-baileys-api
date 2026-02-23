@@ -82,6 +82,29 @@ function postToN8nWebhook(payload) {
   }
 }
 
+/** Map Baileys disconnect reason code ke pesan singkat (untuk response status). */
+function disconnectReasonMessage(statusCode) {
+  const map = {
+    401: "Sudah logout dari HP",
+    403: "Akses ditolak",
+    408: "Koneksi putus / timeout",
+    411: "Multi-device belum diaktifkan di HP",
+    428: "Koneksi ditutup",
+    440: "Device diganti (scan di HP lain)",
+    500: "Sesi rusak, perlu scan QR lagi",
+    503: "Layanan WhatsApp sibuk",
+    515: "Perlu restart koneksi",
+  };
+  return map[statusCode] || "Koneksi terputus";
+}
+
+/** Alasan putus yang berarti gagal total (logout/timeout/sesi rusak). Jangan clear auth untuk 428 (kadang normal setelah scan). */
+function isTerminalDisconnectReason(reason) {
+  if (reason == null) return false;
+  const terminal = [401, 403, 408, 411, 440, 500, 503, 515];
+  return terminal.includes(reason);
+}
+
 function getState(tenantId) {
   const tid = normalizeTenantId(tenantId);
   if (!sessions.has(tid)) {
@@ -89,13 +112,18 @@ function getState(tenantId) {
       sock: null,
       currentQR: null,
       connectionStatus: "disconnected",
+      hadOpenOnce: false, // true setelah connection === "open" (auth aman disimpan)
+      lastDisconnectReason: null, // kode atau null
+      lastDisconnectMessage: null, // pesan untuk user
       chatsMap: new Map(),
       groupsMap: new Map(),
-      // Semua pesan masuk (setelah dinormalisasi) disimpan di sini untuk di-pull oleh N8N
       n8nInbox: [],
-      n8nDebug: [], // ring buffer semua pesan masuk (metadata) untuk debug
+      n8nDebug: [],
       n8nStats: { upserts: 0, messages: 0, lastUpsertAt: null },
       connectPromise: null,
+      pendingClearAuthPromise: null, // saat 401: janji clearAuthState selesai sebelum start baru
+      pendingCredsSave: null, // janji saveCreds() (pas scan, tunggu selesai sebelum reconnect)
+      saveCredsFn: null, // referensi saveCreds() untuk paksa simpan setelah scan (close 428)
     });
   }
   return sessions.get(tid);
@@ -103,16 +131,35 @@ function getState(tenantId) {
 
 async function startWhatsApp(tenantId) {
   const state = getState(tenantId);
+  state.pendingCredsSave = null;
+  if (state.pendingClearAuthPromise) {
+    await state.pendingClearAuthPromise;
+    state.pendingClearAuthPromise = null;
+  }
+  // Setelah logout dari HP (401), pastikan auth kosong dulu supaya dapat QR baru
+  if (state.lastDisconnectReason === 401) {
+    try {
+      await clearAuthState(tenantId);
+    } catch (e) {
+      console.error("clearAuthState before start (401):", e.message);
+    }
+    state.lastDisconnectReason = null;
+    state.lastDisconnectMessage = null;
+  }
   const { state: authState, saveCreds } = await useDatabaseAuthState(tenantId);
   const n8nTargetFrom = normalizePhone(N8N_TARGET_NUMBER);
+  state.saveCredsFn = saveCreds;
 
   state.sock = makeWASocket({
     logger: P({ level: "silent" }),
     auth: authState,
     printQRInTerminal: false,
+    connectTimeoutMs: 60000,
   });
 
-  state.sock.ev.on("creds.update", saveCreds);
+  state.sock.ev.on("creds.update", () => {
+    state.pendingCredsSave = saveCreds();
+  });
 
   state.sock.ev.on("chats.upsert", (chats) => {
     for (const c of chats || []) {
@@ -225,7 +272,7 @@ async function startWhatsApp(tenantId) {
           });
         }
 
-        // Simpan semua pesan masuk ke MySQL (hanya INSERT, tidak pakai Postgres)
+        // Simpan semua pesan masuk ke MySQL
         if (insertIncomingMessage) {
           insertIncomingMessage({
             tenantId,
@@ -246,7 +293,7 @@ async function startWhatsApp(tenantId) {
     }
   });
 
-  state.sock.ev.on("connection.update", (update) => {
+  state.sock.ev.on("connection.update", async (update) => {
     const { connection, qr, lastDisconnect } = update;
 
     if (qr) {
@@ -257,14 +304,67 @@ async function startWhatsApp(tenantId) {
     if (connection === "close") {
       const reason = lastDisconnect?.error?.output?.statusCode;
       const isLogout = reason === DisconnectReason.loggedOut;
+      const isNormalCloseAfterScan = reason === 428 || reason == null;
+      state.lastDisconnectReason = reason ?? null;
+      state.lastDisconnectMessage = reason != null ? disconnectReasonMessage(reason) : null;
       state.currentQR = null;
       state.connectionStatus = "close";
       state.sock = null;
       state.connectionStatus = "disconnected";
+
+      // Jangan tampilkan "Koneksi ditutup" ke user untuk 428 — itu alur normal setelah scan
+      if (isNormalCloseAfterScan) {
+        state.lastDisconnectMessage = null;
+      }
+
+      if (isLogout) {
+        state.hadOpenOnce = false;
+        const p = clearAuthState(tenantId).catch((e) => {
+          console.error("clearAuthState on logout:", e.message);
+        });
+        state.pendingClearAuthPromise = p;
+        await p;
+        state.pendingClearAuthPromise = null;
+      } else if (!state.hadOpenOnce && isTerminalDisconnectReason(reason)) {
+        // Hanya clear auth kalau alasan putus terminal (timeout, sesi rusak, dll).
+        // Jangan clear untuk 428 (connection closed) — itu sering bagian dari alur normal setelah scan.
+        const p = clearAuthState(tenantId).catch((e) => {
+          console.error("clearAuthState on failed connect:", e.message);
+        });
+        state.pendingClearAuthPromise = p;
+        await p;
+        state.pendingClearAuthPromise = null;
+      }
+
       if (!isLogout) {
-        setTimeout(() => startWhatsApp(tenantId).catch(console.error), 2000);
+        // Setelah scan, "close" (428) sering datang SEBELUM creds.update. Beri waktu agar
+        // Baileys sempat emit creds.update; lalu paksa simpan creds yang ada di memory.
+        if (isNormalCloseAfterScan) {
+          await new Promise((r) => setTimeout(r, 2500));
+        }
+        if (state.pendingCredsSave) {
+          try {
+            await state.pendingCredsSave;
+          } catch (e) {
+            console.error("pendingCredsSave on close:", e.message);
+          }
+          state.pendingCredsSave = null;
+        }
+        // Paksa simpan creds saat ini (Baileys sudah update in-memory pas pairing)
+        if (state.saveCredsFn) {
+          try {
+            await state.saveCredsFn();
+          } catch (e) {
+            console.error("saveCredsFn on close:", e.message);
+          }
+        }
+        const delayMs = isNormalCloseAfterScan ? 5000 : 2000;
+        setTimeout(() => startWhatsApp(tenantId).catch(console.error), delayMs);
       }
     } else if (connection === "open") {
+      state.hadOpenOnce = true;
+      state.lastDisconnectReason = null;
+      state.lastDisconnectMessage = null;
       state.currentQR = null;
       state.connectionStatus = "open";
     }
@@ -294,6 +394,33 @@ function getQR(tenantId) {
 
 function getConnectionStatus(tenantId) {
   return getState(tenantId).connectionStatus;
+}
+
+/** Pesan singkat untuk user (sudah terhubung / perlu scan QR / terputus + alasannya). */
+function getStatusMessage(tenantId) {
+  const state = getState(tenantId);
+  const status = state.connectionStatus;
+  if (status === "open" && (state.sock?.ws?.isOpen || state.sock?.user)) {
+    return "Terhubung. WhatsApp siap dipakai.";
+  }
+  if (state.currentQR || status === "connecting") {
+    return "Menunggu scan QR. Buka WhatsApp di HP → Linked devices → Link a device → scan QR.";
+  }
+  if (state.lastDisconnectMessage) {
+    return state.lastDisconnectMessage;
+  }
+  if (status === "disconnected" || status === "close") {
+    return "Menyambung ulang... Panggil GET /api/status untuk cek atau dapat QR baru.";
+  }
+  return "Memulai koneksi...";
+}
+
+function getLastDisconnectMessage(tenantId) {
+  return getState(tenantId).lastDisconnectMessage || null;
+}
+
+function getLastDisconnectReason(tenantId) {
+  return getState(tenantId).lastDisconnectReason ?? null;
 }
 
 async function logout(tenantId) {
@@ -457,6 +584,9 @@ module.exports = {
   getSocket,
   getQR,
   getConnectionStatus,
+  getStatusMessage,
+  getLastDisconnectMessage,
+  getLastDisconnectReason,
   logout,
   getN8nInbox,
   getN8nDebug,

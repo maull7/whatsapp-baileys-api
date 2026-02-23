@@ -9,7 +9,7 @@ module.exports = {
   // Batas harian: ada di kontak HP = 5, tidak ada = 3
   limitInContactsPerDay: Number(process.env.LIMIT_IN_CONTACTS_PER_DAY) || 5,
   limitNotInContactsPerDay: Number(process.env.LIMIT_NOT_IN_CONTACTS_PER_DAY) || 3,
-  // Database PostgreSQL
+  // Database MySQL
   dbHost: process.env.MYSQL_HOST || "localhost",
   dbPort: Number(process.env.MYSQL_PORT) || 3306,
   dbName: process.env.MYSQL_DB || "whatsapp_baileys_blast",

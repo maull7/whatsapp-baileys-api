@@ -1,5 +1,5 @@
 /**
- * Migrasi api_keys.json ke database PostgreSQL.
+ * Migrasi api_keys.json ke database MySQL.
  * Usage: node scripts/migrate-keys-to-db.js
  */
 const fs = require("fs");

@@ -2,13 +2,9 @@ require('dotenv').config();
 const mysql = require("mysql2/promise");
 
 /**
- * Wrapper DB utama sekarang menggunakan MySQL, tapi tetap mempertahankan API
- * yang sama dengan implementasi Postgres sebelumnya:
- *  - query(text, params) -> { rows, rowCount }
- *  - initDb() -> membuat tabel-tabel utama jika belum ada
- *
- * Catatan: query-query lama masih menggunakan placeholder gaya Postgres ($1, $2, ...)
- * sehingga di sini kita konversi ke '?' sebelum dikirim ke mysql2.
+ * Wrapper DB utama menggunakan MySQL (mysql2).
+ * API: query(text, params) -> { rows, rowCount }, initDb() -> buat tabel jika belum ada.
+ * Placeholder $1, $2, ... dikonversi ke ? untuk mysql2.
  */
 
 const pool = mysql.createPool({
@@ -118,7 +114,7 @@ async function initDb() {
       `
     );
 
-    // Index tambahan mirip Postgres, abaikan error jika sudah ada
+    // Index tambahan, abaikan error jika sudah ada (MySQL 1061 = duplicate key name)
     const indexStatements = [
       "CREATE INDEX idx_auth_keys_tenant ON auth_keys(tenant_id)",
       "CREATE INDEX idx_api_keys_key ON api_keys(api_key)",

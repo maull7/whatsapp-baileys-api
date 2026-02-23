@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mysql = require("mysql2/promise");
 
-// Pool MySQL terpisah hanya untuk simpan log pesan masuk (tidak ganggu Postgres utama)
+// Pool MySQL terpisah untuk log pesan masuk (opsional; bisa pakai pool utama juga)
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || "localhost",
   port: Number(process.env.MYSQL_PORT) || 3306,
